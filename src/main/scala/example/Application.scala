@@ -26,7 +26,7 @@ object Application extends zio.App {
 
   val applicationLayer =
     (defaultLayer >>> http4sServer.Http4sServer.live) ++
-      (http4sClient.Http4sClient.live >>> tempClient.TempClient.live) ++
+      (http4sClient.Http4sClient.live ++ defaultLayer >>> tempClient.TempClient.live) ++
       ZEnv.live ++
       http4sClient.Http4sClient.live
 

@@ -18,6 +18,7 @@ import javax.xml.transform.Templates
 import zio.interop.catz._
 import org.http4s.EntityDecoder
 import zio.Task
+import example.configuration
 
 /** The temperature client calls a remote webservice ever so often and gives
   * access to a stream of temperatures.
@@ -30,48 +31,59 @@ object tempClient {
 
   object TempClient {
 
-    /** We've just got a very simple service, which provides a single stream.
-      */
+    //We've just got a very simple service, which provides a single stream.
     trait Service {
-      val temperatureStream: ZStream[Clock with Console with http4sClient.Http4sClient, Throwable, String]
+      val temperatureStream: ZStream[Any, Throwable, String]
     }
 
+    // What do we need in the construction of this service.
+    type ServiceDeps = http4sClient.Http4sClient with Console with Clock with configuration.Configuration
+
     /** The implementation of the service, providing access to the stream. For the creation
-      * of this service, we don't have any other dependencies.
+      * of this service, we already pass in a Http4sClient, which we use in the closure where
+      * we create the stream.
       */
-    val live: ZLayer[http4sClient.Http4sClient, Throwable, TempClient] =
-      ZLayer.succeed {
+    val live: ZLayer[ServiceDeps, Throwable, TempClient] =
+      ZLayer.fromFunction { env =>
         new Service {
-          override val temperatureStream
-              : ZStream[Clock with Console with http4sClient.Http4sClient, Throwable, String] =
+
+          /** We create a zstream. This stream has operators which require specific
+            * information in the environment. Since we already got these as dependencies
+            * when creating this layer, we use provide(env) to inject these dependencies, so
+            * they are removed from the R of the resulting ZStream.
+            */
+          override val temperatureStream: ZStream[Any, Throwable, String] =
             ZStream
               .fromSchedule(Schedule.spaced(Duration.ofSeconds(1L)))
-              .mapM { el => ZIO.succeed(el.toString()) }
-              .mapM { el => makeCall }
+              .mapM { el =>
+                for {
+                  // we should not need to load the configuration each time, but load
+                  // it on module/service initiation instead.
+                  config <- configuration.Configuration.load
+                  res <- makeTemperatureCall(config.temperatureConfig.endpoint)
+                } yield (res)
+              }
               .tap { p => putStrLn(p) }
+              .provide(env)
         }
       }
 
-    private def makeCall(): ZIO[http4sClient.Http4sClient, Throwable, String] = {
+    /** Make the call. This requires a client to be in the environment, and returns a string
+      */
+    private def makeTemperatureCall(url: String): ZIO[http4sClient.Http4sClient, Throwable, String] = {
       for {
-        client <- ZIO.access[http4sClient.Http4sClient] { el => el.get }
         // for converting to string, we can use the standard EntityDecoder from HTTP4S together with
         // the zio.interop.cats_ for mapping the Cats stuff to ZIO
-        res <- client.expect[String](
-          "https://www.7timer.info/bin/astro.php?lon=113.2&lat=23.1&ac=0&unit=metric&output=json&tzshift=0"
-        )
+        client <- ZIO.access[http4sClient.Http4sClient](_.get)
+        res <- client.expect[String](url)
       } yield (res)
     }
 
-    // get the zstream within the context of the provided environment. This will
-    // return a stream that, when drained, will provide a temperature update every
-    // tick.
-    val temperatureStream: URIO[TempClient, ZStream[
-      Clock with Console with http4sClient.Http4sClient,
-      Throwable,
-      String
-    ]] = ZIO.access(_.get.temperatureStream)
+    /** get the zstream within the context of the provided environment. This will
+      * return a stream that, when drained, will provide a temperature update every
+      * tick. The only dependency here is the TempClient, retrieving this stream
+      * won't result in any errors
+      */
+    val temperatureStream: URIO[TempClient, ZStream[Any, Throwable, String]] = ZIO.access(_.get.temperatureStream)
   }
 }
-
-// https://www.7timer.info/bin/astro.php?lon=113.2&lat=23.1&ac=0&unit=metric&output=json&tzshift=0

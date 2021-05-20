@@ -10,8 +10,9 @@ import zio.ZLayer
 import zio.Layer
 
 // define the domain model used for configuration
-case class Config(apiConfig: ApiConfig)
+case class Config(apiConfig: ApiConfig, temperatureConfig: TemperatureConfig)
 case class ApiConfig(endpoint: String, port: Int)
+case class TemperatureConfig(endpoint: String)
 
 // define the configuration dependency to inject into the environment
 // and the related functions
