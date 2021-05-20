@@ -4,6 +4,7 @@ import example.api.Routes
 import example.configuration.Configuration
 import org.http4s.HttpRoutes
 import org.http4s.server.Server
+import org.http4s.client.Client
 import org.http4s.server.blaze.BlazeServerBuilder
 import zio._
 
@@ -11,36 +12,48 @@ import zio._
 // stuff needed by cats
 import zio.interop.catz.implicits._
 import zio.interop.catz._
+import example.Config
+import org.http4s.client.blaze.BlazeClientBuilder
 
 /** Service providing access to a nested http4s server. This follows the same structure
   * of all the other services, but instead of returning a specific trait, we wrap the
   * `Server` from org.https4s
   */
 object http4sServer {
-  type Logger = zio.Has[Http4sServer.Service]
+
+  type Http4sServer = Has[Server]
 
   object Http4sServer {
 
-    type Service = Has[Server]
-
-    val live: ZLayer[ZEnv with Configuration, Throwable, Service] =
+    val live: ZLayer[ZEnv with Configuration, Throwable, Http4sServer] =
       ZLayer.fromManaged {
         for {
           // we should probably cache this, and make this a function, where we
           // pass in the relevant configuration
           config <- Configuration.load.toManaged_
-
           // the implicit runtime provided the implicits needed to create the Timer and ConcurrentEffect
           // typeclasses. This is done by the zio / cats interop imports
-          server <- ZManaged.runtime[ZEnv].flatMap {
-            implicit runtime: Runtime[ZEnv] =>
-              BlazeServerBuilder[Task](runtime.platform.executor.asEC)
-                .bindHttp(config.apiConfig.port, config.apiConfig.endpoint)
-                .withHttpApp(Routes.routes)
-                .resource
-                .toManagedZIO
+          server <- ZManaged.runtime[ZEnv].flatMap { implicit runtime: Runtime[ZEnv] =>
+            BlazeServerBuilder[Task](runtime.platform.executor.asEC)
+              .bindHttp(config.apiConfig.port, config.apiConfig.endpoint)
+              .withHttpApp(Routes.routes)
+              .resource
+              .toManagedZIO
           }
         } yield (server)
       }
+  }
+}
+
+object http4sClient {
+
+  type Http4sClient = Has[Client[Task]]
+
+  object Http4sClient {
+    val live: ZLayer[Any, Throwable, Http4sClient] = {
+      implicit val runtime: Runtime[ZEnv] = Runtime.default
+      val res = BlazeClientBuilder[Task](runtime.platform.executor.asEC).resource.toManagedZIO
+      ZLayer.fromManaged(res)
+    }
   }
 }
